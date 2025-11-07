@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:mysa_flutter/firebase_options.dart';
 import 'screens/sign_in_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'utils/logger_util.dart';
 import 'services/call_cleanup_worker.dart';
+import 'services/notification_service.dart';
+import 'services/fcm_background_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,6 +20,14 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     AppLogger.info('✅ Firebase initialized successfully');
+    
+    AppLogger.debug('Initializing NotificationService...');
+    await NotificationService.initialize();
+    AppLogger.info('✅ NotificationService initialized successfully');
+    
+    AppLogger.debug('Setting up FCM background handler...');
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    AppLogger.info('✅ FCM background handler registered');
     
     AppLogger.debug('Initializing CallCleanupWorker...');
     await CallCleanupWorker.initialize();

@@ -5,6 +5,7 @@ import '../models/call_models.dart';
 import '../services/signaling_client.dart';
 import '../services/call_manager.dart';
 import '../services/fcm_helper.dart';
+import '../services/notification_service.dart';
 import '../utils/logger_util.dart';
 import '../utils/permission_helper.dart';
 
@@ -180,6 +181,11 @@ class CallViewModel extends ChangeNotifier {
           AppLogger.debug("Marking call ID $callIdToProcess as processed to prevent duplicate incoming call");
           _processedCallIds.add(callIdToProcess);
           AppLogger.info("✅ Call ID $callIdToProcess marked as processed (remote hangup)");
+          
+          // Cancel incoming call notification when remote user hangs up
+          AppLogger.debug("Cancelling incoming call notification on remote hangup...");
+          NotificationService.cancelIncomingCallNotification(callIdToProcess);
+          AppLogger.info("✅ Incoming call notification cancelled on remote hangup");
         }
         
         // Immediately hide incoming call UI to prevent it from showing again
@@ -249,10 +255,75 @@ class CallViewModel extends ChangeNotifier {
         _callerId = message.from;
         _callId = callId;
         AppLogger.debug("Caller ID: $_callerId, Call ID: $_callId");
+        
+        // Show notification for incoming call (works when app is in background)
+        AppLogger.debug("Showing incoming call notification...");
+        NotificationService.showIncomingCallNotification(
+          callId: callId,
+          callerId: message.from,
+          title: 'Incoming Call',
+          body: 'Call from ${message.from}',
+        );
+        AppLogger.info("✅ Incoming call notification shown");
+        
         AppLogger.debug("Notifying listeners...");
         notifyListeners();
         AppLogger.info("✅ Incoming call UI state updated");
       });
+
+      // Set up notification service callbacks
+      AppLogger.debug("Setting up notification service callbacks...");
+      NotificationService.onNotificationTap = (callId, callerId) {
+        AppLogger.info("📞 Notification tapped - bringing app to foreground");
+        AppLogger.debug("Call ID: $callId, Caller ID: $callerId");
+        // The incoming call UI will be shown automatically when showIncomingCall is true
+        // This callback can be used to navigate to the call screen if needed
+      };
+      
+      NotificationService.onAcceptAction = (callId) {
+        AppLogger.info("📞 Accept call action from notification");
+        AppLogger.debug("Call ID: $callId");
+        if (_callId == callId && _showIncomingCall) {
+          AppLogger.debug("Accepting call from notification...");
+          acceptCall();
+        }
+      };
+      
+      NotificationService.onRejectAction = (callId) {
+        AppLogger.info("📞 Reject call action from notification");
+        AppLogger.debug("Call ID from notification: $callId");
+        AppLogger.debug("Current call ID: $_callId");
+        AppLogger.debug("Show incoming call: $_showIncomingCall");
+        
+        // Step 1: Cancel the notification immediately (FIRST PRIORITY)
+        AppLogger.debug("Step 1: Cancelling incoming call notification...");
+        NotificationService.cancelIncomingCallNotification(callId);
+        AppLogger.info("✅ Notification cancelled");
+        
+        // Step 2: Mark this call as processed immediately to prevent it from showing again
+        if (callId.isNotEmpty) {
+          AppLogger.debug("Step 2: Marking call ID $callId as processed (rejected from notification)");
+          _processedCallIds.add(callId);
+        }
+        
+        // Step 3: Hide incoming call UI immediately
+        _showIncomingCall = false;
+        notifyListeners();
+        AppLogger.debug("Step 3: Incoming call UI hidden");
+        
+        // Step 4: Hang up the call - ensure call is always hung up
+        // Update call ID if it doesn't match (for proper hangup)
+        if (_callId != callId && callId.isNotEmpty) {
+          AppLogger.debug("Step 4: Updating call ID from $_callId to $callId for proper hangup");
+          _callId = callId;
+        }
+        
+        // Step 5: Reject the call (this will hang up and clean up)
+        AppLogger.debug("Step 5: Rejecting call from notification...");
+        rejectCall();
+        AppLogger.info("✅ Call rejected and hung up from notification");
+      };
+      AppLogger.info("✅ Notification service callbacks set up");
 
       AppLogger.info("✅ CallViewModel initialization complete!");
       AppLogger.debug("All callbacks and listeners set up successfully");
@@ -390,6 +461,13 @@ class CallViewModel extends ChangeNotifier {
       AppLogger.debug("Updating UI state: showActiveCall=true, showIncomingCall=false");
       _showActiveCall = true;
       _showIncomingCall = false;
+      
+      // Cancel incoming call notification
+      if (_callId.isNotEmpty) {
+        AppLogger.debug("Cancelling incoming call notification...");
+        NotificationService.cancelIncomingCallNotification(_callId);
+      }
+      
       AppLogger.debug("Notifying listeners...");
       notifyListeners();
       AppLogger.info("✅ Call accepted successfully!");
@@ -421,6 +499,12 @@ class CallViewModel extends ChangeNotifier {
     _showIncomingCall = false;
     notifyListeners();
 
+    // Cancel incoming call notification
+    if (callIdToProcess.isNotEmpty) {
+      AppLogger.debug("Cancelling incoming call notification...");
+      NotificationService.cancelIncomingCallNotification(callIdToProcess);
+    }
+
     AppLogger.debug("Ending call via CallManager...");
     await _callManager.endCall();
     AppLogger.debug("Sending hangup via signaling client...");
@@ -444,9 +528,14 @@ class CallViewModel extends ChangeNotifier {
     AppLogger.debug("Call start time: $_callStartTime");
     
     // Mark this call as processed to prevent duplicate incoming call screen
-    if (_callId.isNotEmpty) {
-      AppLogger.debug("Marking call ID $_callId as processed (ended)");
-      _processedCallIds.add(_callId);
+    final callIdToEnd = _callId;
+    if (callIdToEnd.isNotEmpty) {
+      AppLogger.debug("Marking call ID $callIdToEnd as processed (ended)");
+      _processedCallIds.add(callIdToEnd);
+      
+      // Cancel incoming call notification
+      AppLogger.debug("Cancelling incoming call notification...");
+      NotificationService.cancelIncomingCallNotification(callIdToEnd);
     }
     
     _isCallEnding = true;

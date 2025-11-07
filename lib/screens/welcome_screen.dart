@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'sign_in_screen.dart';
 import 'call_screen.dart';
 import '../utils/logger_util.dart';
 import '../utils/permission_helper.dart';
 import '../viewmodels/call_view_model.dart';
+import '../services/notification_service.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -31,7 +33,81 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     _initializeCallViewModel();
     AppLogger.debug("Requesting permissions on app start...");
     _requestPermissionsOnStart();
+    AppLogger.debug("Setting up FCM foreground message handler...");
+    _setupFCMForegroundHandler();
     AppLogger.info("✅ WelcomeScreen initialized");
+  }
+
+  void _setupFCMForegroundHandler() {
+    AppLogger.info("=== WelcomeScreen._setupFCMForegroundHandler() called ===");
+    
+    try {
+      // Handle foreground messages
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        AppLogger.info("📨 FCM foreground message received");
+        AppLogger.debug("Message ID: ${message.messageId}");
+        AppLogger.debug("Message data: ${message.data}");
+        AppLogger.debug("Message notification: ${message.notification?.title}");
+
+        // Handle incoming call notification
+        if (message.data['type'] == 'incoming_call') {
+          final callId = message.data['callId'] as String?;
+          final callerId = message.data['callerId'] as String?;
+
+          if (callId != null && callerId != null) {
+            AppLogger.info("📞 Showing incoming call notification in foreground");
+            NotificationService.showIncomingCallNotification(
+              callId: callId,
+              callerId: callerId,
+              title: message.notification?.title ?? 'Incoming Call',
+              body: message.notification?.body ?? 'Call from $callerId',
+            );
+          }
+        }
+      });
+
+      // Handle notification taps when app is in background
+      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+        AppLogger.info("📨 FCM notification tapped - app opened from background");
+        AppLogger.debug("Message ID: ${message.messageId}");
+        AppLogger.debug("Message data: ${message.data}");
+
+        // Handle incoming call notification tap
+        if (message.data['type'] == 'incoming_call') {
+          final callId = message.data['callId'] as String?;
+          final callerId = message.data['callerId'] as String?;
+
+          if (callId != null && callerId != null) {
+            AppLogger.info("📞 Notification tapped - bringing app to foreground");
+            // The incoming call UI will be shown automatically when showIncomingCall is true
+            // The CallViewModel will handle this when it receives the call via Firestore listener
+          }
+        }
+      });
+
+      // Check if app was opened from a notification (when app was terminated)
+      FirebaseMessaging.instance.getInitialMessage().then((RemoteMessage? message) {
+        if (message != null) {
+          AppLogger.info("📨 App opened from notification (app was terminated)");
+          AppLogger.debug("Message ID: ${message.messageId}");
+          AppLogger.debug("Message data: ${message.data}");
+
+          if (message.data['type'] == 'incoming_call') {
+            final callId = message.data['callId'] as String?;
+            final callerId = message.data['callerId'] as String?;
+
+            if (callId != null && callerId != null) {
+              AppLogger.info("📞 App opened from incoming call notification");
+              // The incoming call UI will be shown automatically when showIncomingCall is true
+            }
+          }
+        }
+      });
+
+      AppLogger.info("✅ FCM foreground message handler set up");
+    } catch (e, stackTrace) {
+      AppLogger.error("❌ Error setting up FCM foreground handler", e, stackTrace);
+    }
   }
 
   Future<void> _requestPermissionsOnStart() async {

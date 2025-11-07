@@ -175,8 +175,27 @@ class SignalingClient {
       return;
     }
 
+    await sendHangupForCallId(_currentCallId);
+  }
+
+  /// Send hangup signal for a specific call ID
+  /// This is useful when rejecting calls from notifications where the call ID might not be in _currentCallId
+  Future<void> sendHangupForCallId(String callId) async {
+    AppLogger.info("=== SignalingClient.sendHangupForCallId() called ===");
+    AppLogger.debug("Call ID to hangup: $callId");
+    
+    if (callId.isEmpty) {
+      AppLogger.warning("⚠️ Can't send hangup: call ID is empty");
+      return;
+    }
+
+    if (_currentUserId.isEmpty) {
+      AppLogger.warning("⚠️ Can't send hangup: user ID not initialized");
+      return;
+    }
+
     AppLogger.info("📞 Sending hangup signal...");
-    AppLogger.debug("Call ID to hangup: $_currentCallId");
+    AppLogger.debug("Call ID to hangup: $callId");
     AppLogger.debug("From user: $_currentUserId");
 
     final message = SignalingMessage(
@@ -186,30 +205,29 @@ class SignalingClient {
     );
 
     try {
-      AppLogger.debug("Firestore path: calls/$_currentCallId");
+      AppLogger.debug("Firestore path: calls/$callId");
       
       // Add timestamp to message for cleanup worker
       final messageData = message.toMap();
       messageData["timestamp"] = DateTime.now().millisecondsSinceEpoch;
       AppLogger.debug("Hangup message: $messageData");
       
-      await _db.collection("calls").doc(_currentCallId).set(messageData);
+      await _db.collection("calls").doc(callId).set(messageData);
       
       AppLogger.info("✅ Hangup sent to Firestore");
-      AppLogger.debug("Hangup signal delivered to remote peer");
+      AppLogger.debug("Hangup signal delivered to remote peer for call ID: $callId");
       
-      // Cleanup local signaling state for this call only
-      // Keep incoming call listener active so new calls can be received
-      AppLogger.debug("Cleaning up local signaling state for this call...");
-      stopCallSpecificListeners(); // Only stop call-specific listeners, keep incoming call listener
-      final previousCallId = _currentCallId;
-      _currentCallId = "";
-      AppLogger.info("✅ SignalingClient cleaned up after hangup");
-      AppLogger.debug("Previous call ID: $previousCallId, Current: empty");
-      AppLogger.debug("Incoming call listener remains active for future calls");
+      // Cleanup local signaling state if this was the current call
+      if (_currentCallId == callId) {
+        AppLogger.debug("Cleaning up local signaling state for this call...");
+        stopCallSpecificListeners(); // Only stop call-specific listeners, keep incoming call listener
+        _currentCallId = "";
+        AppLogger.info("✅ SignalingClient cleaned up after hangup");
+        AppLogger.debug("Incoming call listener remains active for future calls");
+      }
     } catch (e, stackTrace) {
       AppLogger.error("❌ Error sending hangup to Firestore", e, stackTrace);
-      AppLogger.debug("Failed call ID: $_currentCallId");
+      AppLogger.debug("Failed call ID: $callId");
     }
   }
 
