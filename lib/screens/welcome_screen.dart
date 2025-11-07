@@ -19,6 +19,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   final _targetUserIdController = TextEditingController();
   bool _isInitialized = false;
   bool _incomingCallDialogShown = false;
+  BuildContext? _dialogContext; // Track dialog context to close it when needed
 
   @override
   void initState() {
@@ -56,6 +57,48 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   void _onCallStateChanged() {
     AppLogger.debug("=== WelcomeScreen._onCallStateChanged() called ===");
     AppLogger.debug("Call state changed, checking if mounted: $mounted");
+    AppLogger.debug("Current state: showIncomingCall=${_callViewModel.showIncomingCall}, dialogShown=$_incomingCallDialogShown");
+    
+    // Close dialog if incoming call is no longer showing but dialog is still open
+    if (mounted && !_callViewModel.showIncomingCall && _incomingCallDialogShown) {
+      AppLogger.info("📞 Incoming call ended, closing dialog");
+      AppLogger.debug("Dialog is shown but showIncomingCall is false, closing dialog...");
+      _incomingCallDialogShown = false;
+      
+      // Close the dialog - try multiple approaches to ensure it closes
+      bool dialogClosed = false;
+      
+      // First, try using stored dialog context
+      if (_dialogContext != null) {
+        AppLogger.debug("Closing dialog using stored context...");
+        try {
+          Navigator.of(_dialogContext!).pop();
+          _dialogContext = null;
+          dialogClosed = true;
+          AppLogger.info("✅ Dialog closed using stored context");
+        } catch (e) {
+          AppLogger.warning("⚠️ Could not close dialog using stored context: $e");
+          _dialogContext = null;
+        }
+      }
+      
+      // If that didn't work, try using the current context
+      if (!dialogClosed) {
+        AppLogger.debug("Trying to close dialog using current context...");
+        try {
+          Navigator.of(context).pop();
+          dialogClosed = true;
+          AppLogger.info("✅ Dialog closed using current context");
+        } catch (e) {
+          AppLogger.warning("⚠️ Could not close dialog using current context: $e");
+        }
+      }
+      
+      if (!dialogClosed) {
+        AppLogger.warning("⚠️ Could not close dialog - it may have already been closed");
+      }
+    }
+    
     if (mounted) {
       AppLogger.debug("Widget is mounted, calling setState()...");
       setState(() {});
@@ -295,18 +338,23 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         AppLogger.debug("Post-frame callback executed for incoming call dialog");
         if (mounted && _callViewModel.showIncomingCall) {
           AppLogger.debug("Widget is mounted and call still incoming, showing dialog...");
+          // Store the navigator context before showing dialog
+          _dialogContext = context;
+          
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (context) {
+            builder: (dialogContext) {
               AppLogger.debug("Building IncomingCallDialog widget");
+              
               return IncomingCallDialog(
                 callerId: _callViewModel.callerId,
                 onAccept: () async {
                   AppLogger.info("📞 Incoming call accepted by user");
                   AppLogger.debug("Resetting dialog flag and closing dialog...");
                   _incomingCallDialogShown = false;
-                  Navigator.of(context).pop();
+                  _dialogContext = null;
+                  Navigator.of(dialogContext).pop();
                   AppLogger.debug("Calling CallViewModel.acceptCall()...");
                   await _callViewModel.acceptCall();
                   AppLogger.info("✅ Accept call action completed");
@@ -315,14 +363,20 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   AppLogger.info("📞 Incoming call rejected by user");
                   AppLogger.debug("Resetting dialog flag and closing dialog...");
                   _incomingCallDialogShown = false;
-                  Navigator.of(context).pop();
+                  _dialogContext = null;
+                  Navigator.of(dialogContext).pop();
                   AppLogger.debug("Calling CallViewModel.rejectCall()...");
                   await _callViewModel.rejectCall();
                   AppLogger.info("✅ Reject call action completed");
                 },
               );
             },
-          );
+          ).then((_) {
+            // Dialog was closed, reset the context
+            AppLogger.debug("Dialog closed, resetting context");
+            _dialogContext = null;
+            _incomingCallDialogShown = false;
+          });
           AppLogger.debug("Dialog shown successfully");
         } else {
           AppLogger.debug("Widget not mounted or call no longer incoming, skipping dialog");

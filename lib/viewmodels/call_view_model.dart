@@ -15,6 +15,7 @@ class CallViewModel extends ChangeNotifier {
   String? _incomingCallSdp;
   String? _incomingCallFromUserId;
   bool _isCallEnding = false;
+  final Set<String> _processedCallIds = {}; // Track processed/ended call IDs to prevent duplicates
 
   // State
   bool _showIncomingCall = false;
@@ -66,6 +67,14 @@ class CallViewModel extends ChangeNotifier {
         _callStartTime = DateTime.now().millisecondsSinceEpoch;
         AppLogger.info("✅ Call connected - start time recorded: $_callStartTime");
         AppLogger.debug("Call duration tracking started");
+        
+        // Reset speaker state to false (earpiece) when call connects
+        // This ensures the UI state matches the actual audio route set by CallManager
+        if (_isSpeakerOn) {
+          AppLogger.debug("Resetting speaker state to false (earpiece) on call connect");
+          _isSpeakerOn = false;
+          AppLogger.info("✅ Speaker state reset to earpiece on call connect");
+        }
       } else if (state.callStatus == CallStatus.ended) {
         AppLogger.info("📞 Call ended - clearing start time");
         AppLogger.debug("Previous start time: $_callStartTime");
@@ -120,11 +129,20 @@ class CallViewModel extends ChangeNotifier {
         AppLogger.info("📞 Offer received via callback");
         AppLogger.debug("SDP length: ${sdp.length} characters");
         AppLogger.debug("Current incoming call state: showIncomingCall=$_showIncomingCall");
+        AppLogger.debug("Current call ID: $_callId");
+        AppLogger.debug("Processed call IDs: $_processedCallIds");
         
         // Prevent duplicate incoming call UI - only show if not already showing
         if (_showIncomingCall) {
           AppLogger.debug("⚠️ Incoming call already showing, ignoring duplicate offer callback");
           AppLogger.debug("This is likely from listenForCallUpdates after listenForIncomingCall already handled it");
+          return;
+        }
+        
+        // Prevent re-processing calls that have already been handled (accepted, rejected, or ended)
+        // Note: This callback doesn't have the callId, so we check the current callId
+        if (_callId.isNotEmpty && _processedCallIds.contains(_callId)) {
+          AppLogger.debug("⚠️ Current call ID $_callId has already been processed, ignoring duplicate offer");
           return;
         }
         
@@ -153,6 +171,24 @@ class CallViewModel extends ChangeNotifier {
       _signalingClient.onRemoteHangup = () {
         AppLogger.info("📞 Received remote hangup via callback");
         AppLogger.debug("Current call ending state: $_isCallEnding");
+        AppLogger.debug("Current call ID: $_callId");
+        
+        // Mark this call as processed IMMEDIATELY to prevent re-showing incoming call screen
+        // This must be done BEFORE any async operations to prevent race conditions
+        final callIdToProcess = _callId;
+        if (callIdToProcess.isNotEmpty) {
+          AppLogger.debug("Marking call ID $callIdToProcess as processed to prevent duplicate incoming call");
+          _processedCallIds.add(callIdToProcess);
+          AppLogger.info("✅ Call ID $callIdToProcess marked as processed (remote hangup)");
+        }
+        
+        // Immediately hide incoming call UI to prevent it from showing again
+        if (_showIncomingCall) {
+          AppLogger.debug("Hiding incoming call UI immediately on remote hangup");
+          _showIncomingCall = false;
+          notifyListeners();
+        }
+        
         if (!_isCallEnding) {
           AppLogger.debug("Call not ending, initiating endCall()...");
           _isCallEnding = false;
@@ -172,21 +208,37 @@ class CallViewModel extends ChangeNotifier {
         AppLogger.debug("From: ${message.from}");
         AppLogger.debug("Message type: ${message.type}");
         AppLogger.debug("Current incoming call state: showIncomingCall=$_showIncomingCall, callId=$_callId");
+        AppLogger.debug("Processed call IDs: $_processedCallIds");
 
-        // Prevent duplicate incoming call UI - only show if not already showing for this call
+        // Prevent re-processing calls that have already been handled (accepted, rejected, or ended)
+        // This check must be FIRST to prevent any processing of already-handled calls
+        if (_processedCallIds.contains(callId)) {
+          AppLogger.debug("⚠️ Call ID $callId has already been processed (accepted/rejected/ended), ignoring duplicate");
+          return;
+        }
+
+        // Prevent duplicate incoming call UI - check if already showing for this call
         if (_showIncomingCall && _callId == callId) {
           AppLogger.debug("⚠️ Incoming call already showing for this call ID, ignoring duplicate");
           return;
         }
 
-        if (message.sdp != null) {
-          AppLogger.debug("Storing incoming SDP offer...");
-          _incomingCallSdp = message.sdp;
-          _incomingCallFromUserId = message.from;
-          AppLogger.info("✅ Stored incoming SDP offer (length: ${message.sdp!.length})");
-        } else {
-          AppLogger.warning("⚠️ Incoming call message has no SDP");
+        // Validate that this is actually an offer message with SDP
+        // Ignore if message type is not "offer" or if SDP is missing
+        if (message.type != "offer") {
+          AppLogger.debug("⚠️ Message type is not 'offer' (type: ${message.type}), ignoring");
+          return;
         }
+
+        if (message.sdp == null || message.sdp!.isEmpty) {
+          AppLogger.warning("⚠️ Incoming call message has no SDP or SDP is empty, ignoring");
+          return;
+        }
+
+        AppLogger.debug("Storing incoming SDP offer...");
+        _incomingCallSdp = message.sdp;
+        _incomingCallFromUserId = message.from;
+        AppLogger.info("✅ Stored incoming SDP offer (length: ${message.sdp!.length})");
 
         AppLogger.debug("Starting to listen for call updates...");
         _signalingClient.listenForCallUpdates(callId);
@@ -227,6 +279,13 @@ class CallViewModel extends ChangeNotifier {
       return;
     }
 
+    // Clear processed call IDs when starting a new call to allow fresh calls
+    // This prevents the set from growing indefinitely
+    if (_processedCallIds.length > 10) {
+      AppLogger.debug("Clearing old processed call IDs (${_processedCallIds.length} entries)");
+      _processedCallIds.clear();
+    }
+
     // Check and request microphone permission before starting call
     AppLogger.debug("Checking microphone permission...");
     final micGranted = await PermissionHelper.isMicrophonePermissionGranted();
@@ -242,6 +301,14 @@ class CallViewModel extends ChangeNotifier {
 
     _isCallEnding = false;
     AppLogger.debug("Call ending flag reset: false");
+
+    // Reset speaker state to false (earpiece) when starting a new call
+    // This ensures calls always start in earpiece mode
+    if (_isSpeakerOn) {
+      AppLogger.debug("Resetting speaker state to false (earpiece) on call start");
+      _isSpeakerOn = false;
+      AppLogger.info("✅ Speaker state reset to earpiece on call start");
+    }
 
     try {
       AppLogger.debug("Calling CallManager.startCall()...");
@@ -270,6 +337,12 @@ class CallViewModel extends ChangeNotifier {
     AppLogger.debug("Caller ID: $_callerId");
     AppLogger.debug("Current UI state: showIncomingCall=$_showIncomingCall, showActiveCall=$_showActiveCall");
 
+    // Mark this call as processed to prevent duplicate incoming call screen
+    if (_callId.isNotEmpty) {
+      AppLogger.debug("Marking call ID $_callId as processed (accepted)");
+      _processedCallIds.add(_callId);
+    }
+
     // Immediately hide incoming call UI to prevent duplicate dialogs
     AppLogger.debug("Hiding incoming call UI immediately...");
     _showIncomingCall = false;
@@ -294,6 +367,14 @@ class CallViewModel extends ChangeNotifier {
 
     _isCallEnding = false;
     AppLogger.debug("Call ending flag reset: false");
+
+    // Reset speaker state to false (earpiece) when accepting a call
+    // This ensures calls always start in earpiece mode
+    if (_isSpeakerOn) {
+      AppLogger.debug("Resetting speaker state to false (earpiece) on call accept");
+      _isSpeakerOn = false;
+      AppLogger.info("✅ Speaker state reset to earpiece on call accept");
+    }
 
     final sdp = _incomingCallSdp;
     final fromUserId = _incomingCallFromUserId ?? _callerId;
@@ -327,6 +408,19 @@ class CallViewModel extends ChangeNotifier {
     AppLogger.debug("Current call status: $_callStatus");
     AppLogger.debug("Caller ID: $_callerId, Call ID: $_callId");
 
+    // Mark this call as processed IMMEDIATELY to prevent duplicate incoming call screen
+    // This must be done BEFORE any async operations to prevent race conditions
+    final callIdToProcess = _callId;
+    if (callIdToProcess.isNotEmpty) {
+      AppLogger.debug("Marking call ID $callIdToProcess as processed (rejected)");
+      _processedCallIds.add(callIdToProcess);
+      AppLogger.info("✅ Call ID $callIdToProcess marked as processed (rejected)");
+    }
+
+    // Immediately hide incoming call UI to prevent it from showing again
+    _showIncomingCall = false;
+    notifyListeners();
+
     AppLogger.debug("Ending call via CallManager...");
     await _callManager.endCall();
     AppLogger.debug("Sending hangup via signaling client...");
@@ -348,6 +442,12 @@ class CallViewModel extends ChangeNotifier {
     AppLogger.debug("Current call status: $_callStatus");
     AppLogger.debug("Caller ID: $_callerId, Call ID: $_callId");
     AppLogger.debug("Call start time: $_callStartTime");
+    
+    // Mark this call as processed to prevent duplicate incoming call screen
+    if (_callId.isNotEmpty) {
+      AppLogger.debug("Marking call ID $_callId as processed (ended)");
+      _processedCallIds.add(_callId);
+    }
     
     _isCallEnding = true;
     AppLogger.debug("Call ending flag set: true");
@@ -405,16 +505,24 @@ class CallViewModel extends ChangeNotifier {
     AppLogger.debug("Previous state: showIncomingCall=$_showIncomingCall, showActiveCall=$_showActiveCall");
     AppLogger.debug("Previous: callerId=$_callerId, callId=$_callId, callStartTime=$_callStartTime");
     
+    // Ensure incoming call UI is hidden
     _showIncomingCall = false;
     _showActiveCall = false;
     _callStartTime = null;
     _isConnected = false;
     _callerId = "";
+    final previousCallId = _callId;
     _callId = "";
     _incomingCallSdp = null;
     _incomingCallFromUserId = null;
     
+    // Note: We don't clear _processedCallIds here to prevent re-processing the same call
+    // The processed call IDs will be cleared when a new call starts or when the view model is disposed
+    // This ensures that even if the Firestore listener fires again, we won't show the incoming call UI
+    
     AppLogger.debug("New state: showIncomingCall=false, showActiveCall=false");
+    AppLogger.debug("Previous call ID: $previousCallId, Current call ID: empty");
+    AppLogger.debug("Processed call IDs preserved: $_processedCallIds");
     AppLogger.debug("All call state variables reset");
     AppLogger.debug("Notifying listeners...");
     notifyListeners();
