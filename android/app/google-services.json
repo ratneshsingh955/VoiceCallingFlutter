@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "284270880618",
+    "project_id": "voicecallingflutter-bb16d",
+    "storage_bucket": "voicecallingflutter-bb16d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:284270880618:android:878089c08e8875770b6713",
+        "android_client_info": {
+          "package_name": "com.ratnesh.mysa_flutter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDiXrOEej9v7f7LRj9x3Cb-HfQOhjHOsYc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
