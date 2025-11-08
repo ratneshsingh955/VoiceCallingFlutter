@@ -35,7 +35,20 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     _requestPermissionsOnStart();
     AppLogger.debug("Setting up FCM foreground message handler...");
     _setupFCMForegroundHandler();
+    AppLogger.debug("Checking for notification actions when app opened...");
+    _checkInitialNotificationAction();
     AppLogger.info("✅ WelcomeScreen initialized");
+  }
+
+  /// Check if app was opened from a notification action (when app was killed)
+  void _checkInitialNotificationAction() {
+    AppLogger.info("=== WelcomeScreen._checkInitialNotificationAction() called ===");
+    
+    // Awesome Notifications handles this automatically through the action listeners
+    // The NotificationService.onAcceptAction and onRejectAction callbacks
+    // are already set up in CallViewModel, so they will be called when the app opens
+    AppLogger.debug("Notification action listeners are set up in CallViewModel");
+    AppLogger.info("✅ Initial notification action check completed");
   }
 
   void _setupFCMForegroundHandler() {

@@ -127,17 +127,19 @@ class FCMHelper {
       AppLogger.debug("Call data: $callData");
 
       // Store notification in Firestore (this will trigger FCM)
+      // IMPORTANT: Send data payload with callId and callerId directly
+      // This ensures the background handler is called even when app is killed
       AppLogger.debug("Preparing notification data for Firestore...");
       final notificationData = {
         "to": fcmToken,
         "data": {
-          "call_data": callData.toString(),
           "type": "incoming_call",
+          "callId": callId,
+          "callerId": callerId,
+          "calleeId": toUserId,
         },
-        "notification": {
-          "title": "Incoming Call",
-          "body": "Call from $callerId",
-        },
+        // Don't include "notification" payload - we want to show via Awesome Notifications
+        // If we include "notification", FCM might show its own notification and not call background handler
         "priority": "high",
       };
       AppLogger.debug("Notification data prepared");

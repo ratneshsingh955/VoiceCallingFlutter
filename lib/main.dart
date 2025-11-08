@@ -20,7 +20,6 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     AppLogger.info('✅ Firebase initialized successfully');
-    
     AppLogger.debug('Initializing NotificationService...');
     await NotificationService.initialize();
     AppLogger.info('✅ NotificationService initialized successfully');
